@@ -132,11 +132,12 @@ namespace {
 
     struct Command : ps::Command {
     public:
-        Command(const sys::Process::Builder& intercept, const sys::Process::Builder& citnames, fs::path output) noexcept
+        Command(const sys::Process::Builder& intercept, const sys::Process::Builder& citnames, fs::path output, bool keep) noexcept
                 : ps::Command()
                 , intercept_(intercept)
                 , citnames_(citnames)
                 , output_(std::move(output))
+                , keep_(keep)
         { }
 
         [[nodiscard]] rust::Result<int> execute() const override
@@ -146,7 +147,9 @@ namespace {
             std::error_code error_code;
             if (fs::exists(output_, error_code)) {
                 ::execute(citnames_, "citnames");
-                fs::remove(output_, error_code);
+                if (!keep_) {
+                    fs::remove(output_, error_code);
+                }
             }
             return result;
         }
@@ -158,6 +161,7 @@ namespace {
         sys::Process::Builder intercept_;
         sys::Process::Builder citnames_;
         fs::path output_;
+        bool keep_;
     };
 
     struct Application : ps::ApplicationFromArgs {
@@ -178,6 +182,7 @@ namespace {
                     {cmd::intercept::FLAG_WRAPPER_DIR,   {1,  false, "path to the wrapper directory",            {cmd::wrapper::DEFAULT_DIR_PATH}, DEVELOPER_GROUP}},
                     {cmd::bear::FLAG_CITNAMES,           {1,  false, "path to the citnames executable",          {cmd::citnames::DEFAULT_PATH},    DEVELOPER_GROUP}},
                     {cmd::bear::FLAG_INTERCEPT,          {1,  false, "path to the intercept executable",         {cmd::intercept::DEFAULT_PATH},   DEVELOPER_GROUP}},
+                    {cmd::bear::FLAG_KEEP,               {0,  false, "don't delete events.json",                 std::nullopt,                     DEVELOPER_GROUP}},
                     {cmd::intercept::FLAG_COMMAND,       {-1, true,  "command to execute",                       std::nullopt,                     std::nullopt}}
             });
             return parser.parse_or_exit(argc, const_cast<const char **>(argv));
@@ -194,12 +199,13 @@ namespace {
             auto environment = sys::env::from(const_cast<const char **>(envp));
             auto intercept = prepare_intercept(args, environment, commands);
             auto citnames = prepare_citnames(args, environment, commands);
+            auto keep = args.as_bool(cmd::bear::FLAG_KEEP).unwrap_or(false);
 
             return rust::merge(intercept, citnames)
-                    .map<ps::CommandPtr>([&commands](const auto &tuple) {
+                    .map<ps::CommandPtr>([&commands,keep](const auto &tuple) {
                         const auto&[intercept, citnames] = tuple;
 
-                        return std::make_unique<Command>(intercept, citnames, commands);
+                        return std::make_unique<Command>(intercept, citnames, commands, keep);
                     });
         }
     };
